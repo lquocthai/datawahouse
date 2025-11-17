@@ -21,7 +21,7 @@ public class TransformData {
             // Lấy id config theo name
             configId = getConfigId(connControl, "Transform Data");
             if (configId == -1) {
-                System.err.println("❌ Không tìm thấy config với name = 'Transform Data'. Vui lòng thêm dòng này vào control.config.");
+                System.err.println("Không tìm thấy config với name = 'Transform Data'. Vui lòng thêm dòng này vào control.config.");
                 return;
             }
 
@@ -77,11 +77,11 @@ public class TransformData {
                 count++;
                 if (count % 1000 == 0) {
                     pstmt.executeBatch();
-                    System.out.println("✅ Đã insert " + count + " dòng...");
+                    System.out.println("Đã insert " + count + " dòng...");
                 }
             }
             pstmt.executeBatch();
-            System.out.println("🎉 Hoàn tất transform " + count + " dòng vào transformed_data.");
+            System.out.println("Hoàn tất transform " + count + " dòng vào transformed_data.");
         }
     }
 
