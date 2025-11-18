@@ -28,6 +28,7 @@ CREATE TABLE date_dim (
 
 -- Bảng transformed_data: Dùng để lưu dữ liệu đã được transform từ bảng raw_data
 CREATE TABLE transformed_data (
+                                  id INT AUTO_INCREMENT PRIMARY KEY,
                                   product_name   VARCHAR(500),
                                   category       VARCHAR(255),
                                   discount       DECIMAL(5,2),      -- tỉ lệ giảm giá, ví dụ 11% → 11.00
