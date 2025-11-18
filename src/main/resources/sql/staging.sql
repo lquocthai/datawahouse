@@ -41,4 +41,18 @@ CREATE TABLE date_dim (
                           day_name VARCHAR(20),
                           month_name VARCHAR(20),
                           is_weekend BOOLEAN
+
+);
+
+-- Bảng transformed_data: Dùng để lưu dữ liệu đã được transform từ bảng raw_data
+CREATE TABLE transformed_data (
+                                  id INT AUTO_INCREMENT PRIMARY KEY,
+                                  product_name   VARCHAR(500),
+                                  category       VARCHAR(255),
+                                  discount       DECIMAL(5,2),      -- tỉ lệ giảm giá, ví dụ 11% → 11.00
+                                  price_original DECIMAL(15,2),     -- giá gốc, ví dụ 37.990.000 → 37990000.00
+                                  price_sale     DECIMAL(15,2),     -- giá sau giảm
+                                  product_url    VARCHAR(1000),
+                                  crawl_date     DATE,               -- chỉ lấy phần ngày từ crawl_date
+                                  load_time      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );

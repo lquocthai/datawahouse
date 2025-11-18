@@ -12,6 +12,7 @@ CREATE TABLE config (
                         name VARCHAR(100) NOT NULL,
                         url VARCHAR(500) NOT NULL,
                         location_store VARCHAR(200) DEFAULT NULL
+                        location_store VARCHAR(200) DEFAULT NULL,
 );
 
 -- Bảng LOG
