@@ -8,7 +8,6 @@ CREATE TABLE config (
                         name VARCHAR(100) NOT NULL,
                         url VARCHAR(500) NOT NULL,
                         location_store VARCHAR(200) DEFAULT NULL,
-                        date_run DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Bảng LOG: Viết log các tiến trình đã thực hiện
