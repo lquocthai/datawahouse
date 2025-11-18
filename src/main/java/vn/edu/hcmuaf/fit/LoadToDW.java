@@ -8,7 +8,7 @@ import java.util.Locale;
 
 public class LoadToDW {
 
-    // DB Connections (adjust nếu bạn dùng user khác)
+    // DB Connections
     private static final String DB_URL_STAGING = "jdbc:mysql://localhost:3307/staging";
     private static final String DB_URL_DW = "jdbc:mysql://localhost:3307/dw";
     private static final String DB_URL_CONTROL = "jdbc:mysql://localhost:3307/control";
@@ -29,7 +29,7 @@ public class LoadToDW {
             // Ensure target tables exist
             ensureDWTables(connDW);
 
-            // Lấy config id (nếu chưa có bạn nên insert 1 record vào control.config trước)
+            // Lấy config id
             configId = getConfigId(connControl, CONFIG_NAME);
             if (configId == -1) {
                 System.err.println("Không tìm thấy config với name = '" + CONFIG_NAME + "'. Vui lòng thêm record tương ứng vào control.config");
@@ -129,8 +129,8 @@ public class LoadToDW {
                     localDate = crawlDateSql.toLocalDate();
                     dateKey = localDate.getYear() * 10000 + localDate.getMonthValue() * 100 + localDate.getDayOfMonth();
                 } else {
-                    // nếu null, bạn có thể skip hoặc gán vào 0; ở đây ta skip insert date_dim và set date_key = NULL (để tránh fk fail)
-                    // nhưng fact.date_key là INT FK, allow null? hiện FK không cho NULL nếu không khai báo. Để an toàn, set date_key = NULL bằng cách psFact.setNull
+
+
                 }
 
                 // Nếu có date, chèn date_dim (INSERT IGNORE để tránh duplicate)
