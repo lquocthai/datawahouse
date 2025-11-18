@@ -17,7 +17,7 @@ import java.util.*;
 public class LoadDataToFile {
 
     private static final String DB_URL = "jdbc:mysql://localhost:3307/control";
-    private static final String DB_USER = "user_staging";
+    private static final String DB_USER = "root";
     private static final String DB_PASS = "123456";
 
     public static void main(String[] args) {
@@ -61,7 +61,7 @@ public class LoadDataToFile {
     //Lấy danh sách config từ DB
     private static List<Map<String, Object>> fetchConfigs(Connection conn) throws SQLException {
         List<Map<String, Object>> configs = new ArrayList<>();
-        String sql = "SELECT id, name, url, location_store FROM config";
+        String sql = "SELECT id, name, url, location_store FROM config WHERE url IS NOT NULL AND url LIKE 'http%'";
         try (PreparedStatement ps = conn.prepareStatement(sql);
              ResultSet rs = ps.executeQuery()) {
             while (rs.next()) {
