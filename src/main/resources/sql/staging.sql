@@ -18,17 +18,6 @@ CREATE TABLE raw_data (
                           load_time      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Bảng TRANSFORMED_DATA (TransformData.java)
-CREATE TABLE transformed_data (
-                                  product_name   VARCHAR(500),
-                                  category       VARCHAR(255),
-                                  discount       DECIMAL(5,2),
-                                  price_original DECIMAL(15,2),
-                                  price_sale     DECIMAL(15,2),
-                                  product_url    VARCHAR(1000),
-                                  crawl_date     DATE,
-                                  load_time      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
 
 -- Bảng DATE_DIM
 CREATE TABLE date_dim (
