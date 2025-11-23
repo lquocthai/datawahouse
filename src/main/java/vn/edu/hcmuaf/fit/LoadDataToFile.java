@@ -86,31 +86,43 @@ public class LoadDataToFile {
     }
 
 //  Crawl dữ liệu từ url (crawlProducts)
-    private static List<Map<String, String>> crawlProducts(String url) throws IOException {
-        List<Map<String, String>> products = new ArrayList<>();
-        Document doc = Jsoup.connect(url)
-                .userAgent("Mozilla/5.0")
-                .timeout(10000)
-                .get();
-        Elements items = doc.select("div.product-info");
+private static List<Map<String, String>> crawlProducts(String url) throws IOException {
+    List<Map<String, String>> products = new ArrayList<>();
+    Document doc = Jsoup.connect(url)
+            .userAgent("Mozilla/5.0")
+            .timeout(10000)
+            .get();
 
-        for (Element item : items) {
-            Map<String, String> p = new HashMap<>();
-            p.put("product_name", item.select(".product__name h3").text());
-            p.put("category", "Laptop");
-            p.put("discount", item.select(".product__price--percent-detail span").text());
-            p.put("price_original", item.select(".product__price--through").text());
-            p.put("price_sale", item.select(".product__price--show").text());
-            p.put("product_url", item.select(".product__img").attr("src"));
-            p.put("crawl_date", LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")));
-            products.add(p);
+    // Chỉ lấy các sản phẩm trong div có class "product-list-filter"
+    Elements items = doc.select("div.product-list-filter div.product-info");
+
+    for (Element item : items) {
+        Map<String, String> p = new HashMap<>();
+        p.put("product_name", item.select(".product__name h3").text());
+        p.put("category", "Laptop");
+        p.put("discount", item.select(".product__price--percent-detail span").text());
+        p.put("price_original", item.select(".product__price--through").text());
+        p.put("price_sale", item.select(".product__price--show").text());
+//        p.put("product_url", item.select(".product__img").attr("src"));
+        // ===== LẤY URL SẢN PHẨM CHUẨN =====
+        String productUrl = item.select("a.product__link").attr("href");
+
+        // Convert thành absolute URL
+        if (productUrl.startsWith("/")) {
+            productUrl = "https://cellphones.com.vn" + productUrl;
         }
-
-        System.out.println("Số sản phẩm lấy được: " + products.size());
-        return products;
+        System.out.println(productUrl);
+        p.put("product_url", productUrl);
+        p.put("crawl_date", LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")));
+        products.add(p);
     }
 
-//    Lưu file CSV vào folder(saveProductsToCSV)
+    System.out.println("Số sản phẩm lấy được: " + products.size());
+    return products;
+}
+
+
+    //    Lưu file CSV vào folder(saveProductsToCSV)
     private static String saveProductsToCSV(String location, String name, List<Map<String, String>> products) throws IOException {
         Files.createDirectories(Paths.get(location));
         String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));

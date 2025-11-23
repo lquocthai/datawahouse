@@ -27,7 +27,7 @@ public class LoadToDW {
              Connection connControl = DriverManager.getConnection(DB_URL_CONTROL, DB_USER, DB_PASS)) {
 
             // Ensure target tables exist
-            ensureDWTables(connDW);
+//            ensureDWTables(connDW);
 
             // Lấy config id
             configId = getConfigId(connControl, CONFIG_NAME);
