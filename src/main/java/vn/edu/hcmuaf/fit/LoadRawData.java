@@ -27,6 +27,11 @@ public class LoadRawData {
         // Kết nối Database Staging
         try (Connection conn = DriverManager.getConnection(DB_URL, DB_USER, DB_PASS)) {
 
+            // ================================
+            try (Statement st = conn.createStatement()) {
+                st.execute("TRUNCATE TABLE raw_data");
+                System.out.println("Đã xóa dữ liệu cũ trong bảng raw_data.");
+            }
             // Đọc file CSV vào List
             List<String[]> data = readCSV(csvFile);
 
