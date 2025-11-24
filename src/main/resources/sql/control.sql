@@ -25,28 +25,13 @@ CREATE TABLE log (
 );
 
 -- INSERT CONFIG SAMPLE
-INSERT INTO config(name, url, location_store)
-VALUES(
-          'Laptop',
-          'https://cellphones.com.vn/laptop.html',
-          'C:/Folder data_crawl'
-      );
-
-INSERT INTO config(name, url, location_store)
-VALUES(
-          'Transform Data',
-          'Transform Raw → Transformed',
-          'none'
-      );
-
-INSERT INTO config(name, url, location_store)
-VALUES(
-          'Load To DW',
-          'Load staging → dw',
-          'none'
-      );
-
--- Xóa config thừa trong trường hợp chạy lại script
-DELETE FROM config WHERE name = 'Transform Data';
-DELETE FROM config WHERE name = 'Load To DW';
-
+insert into control.config(name, url, location_store)
+values('Laptop','https://cellphones.com.vn/laptop.html','C:/Folder Chung/Study/All Subject/DataWarehouse/Project/data_csv_daily');
+insert into control.config(name, url, location_store)
+values('Load Raw Data','Load to raw_data','staging');
+insert into control.config(name, url, location_store)
+values('Transform Data','Tranform Data From table raw_data','transformed_data');
+insert into control.config(name, url, location_store)
+values('Load To DW','Load to dw','fact_product');
+insert into control.config(name, url, location_store)
+values('Load To Datamart','Load to dw','dm_product_analysis');

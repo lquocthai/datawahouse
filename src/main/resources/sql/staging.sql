@@ -19,19 +19,6 @@ CREATE TABLE raw_data (
 );
 
 
--- Bảng DATE_DIM
-CREATE TABLE date_dim (
-                          date_key INT PRIMARY KEY,
-                          full_date DATE NOT NULL,
-                          day INT,
-                          month INT,
-                          quarter INT,
-                          year INT,
-                          day_name VARCHAR(20),
-                          month_name VARCHAR(20),
-                          is_weekend BOOLEAN
-
-);
 -- Bảng transformed_data: Dùng để lưu dữ liệu đã được transform từ bảng raw_data
 CREATE TABLE transformed_data (
                                   id INT AUTO_INCREMENT PRIMARY KEY,
