@@ -1,24 +1,22 @@
 package vn.edu.hcmuaf.fit;
 
 import java.sql.*;
-import java.time.DayOfWeek;
 import java.time.LocalDate;
-import java.time.format.TextStyle;
-import java.util.Locale;
+import java.time.format.DateTimeFormatter;
 
 public class LoadToDW {
 
-    // DB Connections
     private static final String DB_URL_STAGING = "jdbc:mysql://localhost:3307/staging";
     private static final String DB_URL_DW = "jdbc:mysql://localhost:3307/dw";
     private static final String DB_URL_CONTROL = "jdbc:mysql://localhost:3307/control";
+
     private static final String DB_USER = "root";
     private static final String DB_PASS = "123456";
 
-    // Tên config trong control.config để log (nếu chưa có, tạo 1 dòng config tương ứng)
     private static final String CONFIG_NAME = "Load To DW";
 
     public static void main(String[] args) {
+
         boolean success = false;
         int configId = -1;
 
@@ -26,27 +24,54 @@ public class LoadToDW {
              Connection connDW = DriverManager.getConnection(DB_URL_DW, DB_USER, DB_PASS);
              Connection connControl = DriverManager.getConnection(DB_URL_CONTROL, DB_USER, DB_PASS)) {
 
-            // Ensure target tables exist
-//            ensureDWTables(connDW);
-
             // Lấy config id
             configId = getConfigId(connControl, CONFIG_NAME);
             if (configId == -1) {
-                System.err.println("Không tìm thấy config với name = '" + CONFIG_NAME + "'. Vui lòng thêm record tương ứng vào control.config");
-                // vẫn cho chạy nhưng không log vào control (hoặc có thể dừng)
+                System.err.println("⚠ Không tìm thấy config '" + CONFIG_NAME + "' trong control.config.");
+                System.err.println("⚠ Vui lòng thêm mới record trước khi chạy log.");
             }
 
-            // Thực hiện load
-            int loaded = loadFactFromTransformed(connStaging, connDW);
-            System.out.println("Hoàn tất: đã load " + loaded + " dòng vào DW.");
+            String selectSQL = """
+                    SELECT product_name, category, product_url, discount, price_original, price_sale, crawl_date
+                    FROM transformed_data 
+                    WHERE crawl_date = CURDATE()
+                    """;
 
-            success = true;
+            try (Statement stmt = connStaging.createStatement();
+                 ResultSet rs = stmt.executeQuery(selectSQL)) {
+
+                int count = 0;
+
+                while (rs.next()) {
+                    String productName = rs.getString("product_name");
+                    String category = rs.getString("category");
+                    String productUrl = rs.getString("product_url");
+                    double discount = rs.getDouble("discount");
+                    double priceOriginal = rs.getDouble("price_original");
+                    double priceSale = rs.getDouble("price_sale");
+                    String crawlDateStr = rs.getString("crawl_date");
+
+                    LocalDate crawlDate = LocalDate.parse(crawlDateStr, DateTimeFormatter.ofPattern("yyyy-MM-dd"));
+                    int dateKey = Integer.parseInt(crawlDate.format(DateTimeFormatter.BASIC_ISO_DATE));
+
+                    long productKey = getOrInsertProduct(connDW, productName, category, productUrl);
+
+                    insertOrUpdateFact(connDW, productKey, dateKey, discount, priceOriginal, priceSale);
+
+                    count++;
+                }
+
+                System.out.println("Hoàn tất ETL " + count + " dòng lên DW.");
+
+                success = true;
+
+            }
 
         } catch (Exception e) {
             e.printStackTrace();
             success = false;
         } finally {
-            // Ghi log vào control nếu có configId
+            // Ghi log sau khi kết thúc
             if (configId != -1) {
                 try (Connection connControl = DriverManager.getConnection(DB_URL_CONTROL, DB_USER, DB_PASS)) {
                     writeLog(connControl, configId, success);
@@ -57,142 +82,51 @@ public class LoadToDW {
         }
     }
 
-    /**
-     * Tạo các bảng trong DW nếu chưa có: date_dim và fact_product
-     */
-    private static void ensureDWTables(Connection conn) throws SQLException {
-        String createDateDim =
-                "CREATE TABLE IF NOT EXISTS date_dim (\n" +
-                        "  date_key INT PRIMARY KEY,\n" +
-                        "  full_date DATE NOT NULL,\n" +
-                        "  day INT,\n" +
-                        "  month INT,\n" +
-                        "  quarter INT,\n" +
-                        "  year INT,\n" +
-                        "  day_name VARCHAR(20),\n" +
-                        "  month_name VARCHAR(20),\n" +
-                        "  is_weekend BOOLEAN\n" +
-                        ") CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;";
-
-        String createFact =
-                "CREATE TABLE IF NOT EXISTS fact_product (\n" +
-                        "  product_key BIGINT AUTO_INCREMENT PRIMARY KEY,\n" +
-                        "  product_name VARCHAR(500),\n" +
-                        "  category VARCHAR(255),\n" +
-                        "  discount DECIMAL(5,2),\n" +
-                        "  price_original DECIMAL(15,2),\n" +
-                        "  price_sale DECIMAL(15,2),\n" +
-                        "  product_url VARCHAR(1000),\n" +
-                        "  date_key INT,\n" +
-                        "  load_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,\n" +
-                        "  FOREIGN KEY (date_key) REFERENCES date_dim(date_key)\n" +
-                        ") CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;";
-
-        try (Statement st = conn.createStatement()) {
-            st.execute(createDateDim);
-            st.execute(createFact);
-        }
-    }
-
-    /**
-     * Load dữ liệu từ staging.transformed_data -> dw.fact_product
-     * - Chèn date_dim nếu date_key chưa tồn tại
-     * - Batch insert vào fact_product
-     */
-    private static int loadFactFromTransformed(Connection connStaging, Connection connDW) throws SQLException {
-        String selectTransformed = "SELECT product_name, category, discount, price_original, price_sale, product_url, crawl_date FROM transformed_data";
-
-        String insertDateDim = "INSERT IGNORE INTO date_dim (date_key, full_date, day, month, quarter, year, day_name, month_name, is_weekend) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)";
-        String insertFact = "INSERT INTO fact_product (product_name, category, discount, price_original, price_sale, product_url, date_key) VALUES (?, ?, ?, ?, ?, ?, ?)";
-
-        int totalLoaded = 0;
-        connDW.setAutoCommit(false);
-
-        try (Statement st = connStaging.createStatement();
-             ResultSet rs = st.executeQuery(selectTransformed);
-             PreparedStatement psDate = connDW.prepareStatement(insertDateDim);
-             PreparedStatement psFact = connDW.prepareStatement(insertFact)) {
-
-            int batchCount = 0;
-            while (rs.next()) {
-                String productName = rs.getString("product_name");
-                String category = rs.getString("category");
-                Double discount = rs.getObject("discount") == null ? 0.0 : rs.getDouble("discount");
-                Double priceOriginal = rs.getObject("price_original") == null ? 0.0 : rs.getDouble("price_original");
-                Double priceSale = rs.getObject("price_sale") == null ? 0.0 : rs.getDouble("price_sale");
-                Date crawlDateSql = rs.getDate("crawl_date"); // DATE (may be null)
-
-                // compute date_key
-                int dateKey = 0;
-                LocalDate localDate = null;
-                if (crawlDateSql != null) {
-                    localDate = crawlDateSql.toLocalDate();
-                    dateKey = localDate.getYear() * 10000 + localDate.getMonthValue() * 100 + localDate.getDayOfMonth();
-                } else {
-
-
-                }
-
-                // Nếu có date, chèn date_dim (INSERT IGNORE để tránh duplicate)
-                if (localDate != null) {
-                    psDate.setInt(1, dateKey);
-                    psDate.setDate(2, Date.valueOf(localDate));
-                    psDate.setInt(3, localDate.getDayOfMonth());
-                    psDate.setInt(4, localDate.getMonthValue());
-                    int quarter = (localDate.getMonthValue() - 1) / 3 + 1;
-                    psDate.setInt(5, quarter);
-                    psDate.setInt(6, localDate.getYear());
-                    psDate.setString(7, localDate.getDayOfWeek().getDisplayName(TextStyle.FULL, Locale.ENGLISH));
-                    psDate.setString(8, localDate.getMonth().getDisplayName(TextStyle.FULL, Locale.ENGLISH));
-                    DayOfWeek dow = localDate.getDayOfWeek();
-                    psDate.setBoolean(9, dow == DayOfWeek.SATURDAY || dow == DayOfWeek.SUNDAY);
-                    psDate.addBatch();
-                }
-
-                // Prepare fact insert
-                psFact.setString(1, productName);
-                psFact.setString(2, category);
-                if (discount == null) psFact.setNull(3, Types.DECIMAL);
-                else psFact.setDouble(3, discount);
-                if (priceOriginal == null) psFact.setNull(4, Types.DECIMAL);
-                else psFact.setDouble(4, priceOriginal);
-                if (priceSale == null) psFact.setNull(5, Types.DECIMAL);
-                else psFact.setDouble(5, priceSale);
-                psFact.setString(6, rs.getString("product_url"));
-                if (localDate != null) psFact.setInt(7, dateKey);
-                else psFact.setNull(7, Types.INTEGER);
-
-                psFact.addBatch();
-
-                batchCount++;
-                totalLoaded++;
-
-                // Thực thi batch mỗi 1000
-                if (batchCount % 1000 == 0) {
-                    psDate.executeBatch();
-                    psFact.executeBatch();
-                    connDW.commit();
-                    System.out.println("Đã load " + batchCount + " dòng (tổng: " + totalLoaded + ")");
-                    batchCount = 0;
-                }
+    private static long getOrInsertProduct(Connection conn, String name, String category, String url) throws SQLException {
+        String selectSQL = "SELECT product_key FROM product_dim WHERE product_url = ?";
+        try (PreparedStatement ps = conn.prepareStatement(selectSQL)) {
+            ps.setString(1, url);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) return rs.getLong("product_key");
             }
-
-            // execute remaining
-            psDate.executeBatch();
-            psFact.executeBatch();
-            connDW.commit();
-
-        } catch (SQLException e) {
-            connDW.rollback();
-            throw e;
-        } finally {
-            connDW.setAutoCommit(true);
         }
 
-        return totalLoaded;
+        String insertSQL = "INSERT INTO product_dim (product_name, category, product_url) VALUES (?, ?, ?)";
+        try (PreparedStatement ps = conn.prepareStatement(insertSQL, Statement.RETURN_GENERATED_KEYS)) {
+            ps.setString(1, name);
+            ps.setString(2, category);
+            ps.setString(3, url);
+            ps.executeUpdate();
+            try (ResultSet rs = ps.getGeneratedKeys()) {
+                if (rs.next()) return rs.getLong(1);
+            }
+        }
+        throw new SQLException("Không lấy được product_key cho product: " + url);
     }
 
-    // Lấy config id từ control.config
+    private static void insertOrUpdateFact(Connection conn, long productKey, int dateKey,
+                                           double discount, double priceOriginal, double priceSale)
+            throws SQLException {
+
+        String sql = """
+                INSERT INTO fact_product(product_key, date_key, discount, price_original, price_sale)
+                VALUES (?, ?, ?, ?, ?)
+                ON DUPLICATE KEY UPDATE
+                    discount = VALUES(discount),
+                    price_original = VALUES(price_original),
+                    price_sale = VALUES(price_sale)
+                """;
+
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setLong(1, productKey);
+            ps.setInt(2, dateKey);
+            ps.setDouble(3, discount);
+            ps.setDouble(4, priceOriginal);
+            ps.setDouble(5, priceSale);
+            ps.executeUpdate();
+        }
+    }
+
     private static int getConfigId(Connection conn, String name) throws SQLException {
         String sql = "SELECT id FROM config WHERE name = ?";
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
@@ -204,7 +138,6 @@ public class LoadToDW {
         return -1;
     }
 
-    // Ghi log vào control.log
     private static void writeLog(Connection conn, int configId, boolean success) throws SQLException {
         String sql = "INSERT INTO log (id_config, date_run, status) VALUES (?, NOW(), ?)";
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
