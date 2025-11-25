@@ -16,21 +16,27 @@ public class LoadToDW {
     private static final String CONFIG_NAME = "Load To DW";
 
     public static void main(String[] args) {
-
+        // 1. Bắt đầu ETL
         boolean success = false;
         int configId = -1;
 
+        // 2. Kết nối tới các database: Staging, DW, Control
         try (Connection connStaging = DriverManager.getConnection(DB_URL_STAGING, DB_USER, DB_PASS);
              Connection connDW = DriverManager.getConnection(DB_URL_DW, DB_USER, DB_PASS);
              Connection connControl = DriverManager.getConnection(DB_URL_CONTROL, DB_USER, DB_PASS)) {
 
-            // Lấy config id
+            // 3. Lấy config id từ bảng control
             configId = getConfigId(connControl, CONFIG_NAME);
+
+            // 4. Kiểm tra config có tồn tại không
             if (configId == -1) {
+
+                // 5. Nếu không tìm thấy config → thông báo lỗi
                 System.err.println("⚠ Không tìm thấy config '" + CONFIG_NAME + "' trong control.config.");
                 System.err.println("⚠ Vui lòng thêm mới record trước khi chạy log.");
             }
 
+            // 6. Lấy dữ liệu hôm nay từ bảng transformed_data trong staging
             String selectSQL = """
                     SELECT product_name, category, product_url, discount, price_original, price_sale, crawl_date
                     FROM transformed_data 
@@ -42,7 +48,10 @@ public class LoadToDW {
 
                 int count = 0;
 
+                // 7. Lặp qua từng dòng dữ liệu
                 while (rs.next()) {
+
+                    // 8. Trích xuất các trường dữ liệu
                     String productName = rs.getString("product_name");
                     String category = rs.getString("category");
                     String productUrl = rs.getString("product_url");
@@ -51,16 +60,22 @@ public class LoadToDW {
                     double priceSale = rs.getDouble("price_sale");
                     String crawlDateStr = rs.getString("crawl_date");
 
+                    // 9. Chuyển crawl_date thành LocalDate và tạo dateKey
                     LocalDate crawlDate = LocalDate.parse(crawlDateStr, DateTimeFormatter.ofPattern("yyyy-MM-dd"));
                     int dateKey = Integer.parseInt(crawlDate.format(DateTimeFormatter.BASIC_ISO_DATE));
 
+                    // 10. Kiểm tra sản phẩm có trong product_dim chưa
+                    // 11. Nếu tồn tại trả về productKey, nếu chưa có thì insert mới và trả về productKey
                     long productKey = getOrInsertProduct(connDW, productName, category, productUrl);
 
+                    // 12. Insert hoặc update dữ liệu fact_product
                     insertOrUpdateFact(connDW, productKey, dateKey, discount, priceOriginal, priceSale);
 
+                    // 13. Tăng số lượng dòng đã xử lý
                     count++;
                 }
 
+                // 14. In ra số dòng đã load lên DW
                 System.out.println("Hoàn tất ETL " + count + " dòng lên DW.");
 
                 success = true;
@@ -68,10 +83,11 @@ public class LoadToDW {
             }
 
         } catch (Exception e) {
+            // 15. Nếu có lỗi → in stack trace
             e.printStackTrace();
             success = false;
         } finally {
-            // Ghi log sau khi kết thúc
+            // 16. Ghi log SUCCESS hoặc FAILED (nếu configId != -1)
             if (configId != -1) {
                 try (Connection connControl = DriverManager.getConnection(DB_URL_CONTROL, DB_USER, DB_PASS)) {
                     writeLog(connControl, configId, success);
@@ -81,6 +97,8 @@ public class LoadToDW {
             }
         }
     }
+
+    // 17. Kết thúc ETL
 
     private static long getOrInsertProduct(Connection conn, String name, String category, String url) throws SQLException {
         String selectSQL = "SELECT product_key FROM product_dim WHERE product_url = ?";
