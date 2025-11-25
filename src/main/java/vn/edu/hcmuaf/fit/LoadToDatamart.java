@@ -21,30 +21,17 @@ public class LoadToDatamart {
              Connection connDM = DriverManager.getConnection(DB_URL_DM, DB_USER, DB_PASS);
              Connection connControl = DriverManager.getConnection(DB_URL_CONTROL, DB_USER, DB_PASS)) {
 
-            // 1. Lấy config ID
             configId = getConfigId(connControl, CONFIG_NAME);
-            if (configId == -1) {
-                System.err.println("⚠ Không tìm thấy config '" + CONFIG_NAME + "'");
-            }
 
-            // 2. Load product_dim từ DW -> DM trước
-            loadProductDim(connDW, connDM);
-
-            // 3. Load fact_product
-            int factRows = loadFact(connDW, connDM);
-            System.out.println("✔ Load fact_product vào DM: " + factRows + " dòng.");
-
-            // 4. Tính toán price_daily
-            loadPriceDaily(connDM);
-
-            // 5. Tính toán top_discount_daily
-            loadTopDiscountDaily(connDM);
+            loadPriceDaily(connDW, connDM);
+            loadTopDiscountDaily(connDW, connDM);
+            loadTop5HighestPrice(connDW, connDM);
+            loadTop5LowestPrice(connDW, connDM);
 
             success = true;
 
         } catch (Exception e) {
             e.printStackTrace();
-            success = false;
         } finally {
             if (configId != -1) {
                 try (Connection connControl = DriverManager.getConnection(DB_URL_CONTROL, DB_USER, DB_PASS)) {
@@ -56,152 +43,182 @@ public class LoadToDatamart {
         }
     }
 
-    // ==============================
-    // Load Product Dim
-    // ==============================
-    private static void loadProductDim(Connection connDW, Connection connDM) throws SQLException {
-        String sql = "SELECT product_key, product_name, category, product_url FROM product_dim";
-        String insert = """
-            INSERT INTO product_dim (product_key, product_name, category, product_url)
-            VALUES (?, ?, ?, ?)
-            ON DUPLICATE KEY UPDATE
-                product_name = VALUES(product_name),
-                category = VALUES(category),
-                product_url = VALUES(product_url)
-        """;
-
-        try (Statement st = connDW.createStatement();
-             ResultSet rs = st.executeQuery(sql);
-             PreparedStatement ps = connDM.prepareStatement(insert)) {
-
-            while (rs.next()) {
-                ps.setLong(1, rs.getLong("product_key"));
-                ps.setString(2, rs.getString("product_name"));
-                ps.setString(3, rs.getString("category"));
-                ps.setString(4, rs.getString("product_url"));
-                ps.addBatch();
-            }
-            ps.executeBatch();
-        }
-
-        System.out.println("✔ Load product_dim vào DM");
-    }
-
-    // ==============================
-    // Load Fact Product
-    // ==============================
-    private static int loadFact(Connection connDW, Connection connDM) throws SQLException {
+    // ===============================================
+    // 1. Price Daily
+    // ===============================================
+    private static void loadPriceDaily(Connection connDW, Connection connDM) throws SQLException {
         String sql = """
-            SELECT product_key, date_key, discount, price_original, price_sale
-            FROM fact_product
+            SELECT d.full_date,
+                   COUNT(*) AS total_laptops,
+                   AVG(fp.price_original) AS avg_price_original,
+                   AVG(fp.price_sale) AS avg_price_sale,
+                   AVG(fp.discount) AS avg_discount
+            FROM fact_product fp
+            JOIN date_dim d ON fp.date_key = d.date_key
+            GROUP BY d.full_date
         """;
 
-        String insert = """
-            INSERT INTO fact_product (product_key, date_key, discount, price_original, price_sale)
-            VALUES (?, ?, ?, ?, ?)
-            ON DUPLICATE KEY UPDATE
-                discount = VALUES(discount),
-                price_original = VALUES(price_original),
-                price_sale = VALUES(price_sale)
-        """;
-
-        int total = 0;
-
-        try (Statement st = connDW.createStatement();
-             ResultSet rs = st.executeQuery(sql);
-             PreparedStatement ps = connDM.prepareStatement(insert)) {
-
+        try (Statement stDW = connDW.createStatement();
+             ResultSet rs = stDW.executeQuery(sql);
+             PreparedStatement psDM = connDM.prepareStatement(
+                     "REPLACE INTO price_daily (full_date, total_laptops, avg_price_original, avg_price_sale, avg_discount) VALUES (?, ?, ?, ?, ?)"
+             )) {
             while (rs.next()) {
-                ps.setLong(1, rs.getLong("product_key"));
-                ps.setInt(2, rs.getInt("date_key"));
-                ps.setDouble(3, rs.getDouble("discount"));
-                ps.setDouble(4, rs.getDouble("price_original"));
-                ps.setDouble(5, rs.getDouble("price_sale"));
-                ps.addBatch();
-                total++;
-
-                if (total % 1000 == 0) ps.executeBatch();
+                psDM.setDate(1, rs.getDate("full_date"));
+                psDM.setInt(2, rs.getInt("total_laptops"));
+                psDM.setBigDecimal(3, rs.getBigDecimal("avg_price_original"));
+                psDM.setBigDecimal(4, rs.getBigDecimal("avg_price_sale"));
+                psDM.setBigDecimal(5, rs.getBigDecimal("avg_discount"));
+                psDM.addBatch();
             }
-            ps.executeBatch();
+            psDM.executeBatch();
         }
-
-        return total;
+        System.out.println("✔ price_daily updated");
     }
 
-    // ==============================
-    // Price Daily
-    // ==============================
-    private static void loadPriceDaily(Connection connDM) throws SQLException {
-        String insertAgg = """
-            INSERT INTO price_daily (date_key, total_laptops, avg_price_original, avg_price_sale, avg_discount)
-            SELECT
-                date_key,
-                COUNT(*) AS total_laptops,
-                AVG(price_original),
-                AVG(price_sale),
-                AVG(discount)
+    // ===============================================
+    // 2. Top Discount Daily
+    // ===============================================
+    private static void loadTopDiscountDaily(Connection connDW, Connection connDM) throws SQLException {
+        String sql = """
+        SELECT
+            d.full_date,
+            ranked.product_key,
+            p.product_name,
+            ranked.price_sale,
+            ranked.discount,
+            ranked.rank_in_day
+        FROM (
+            SELECT date_key, product_key, price_sale, discount,
+                   ROW_NUMBER() OVER (PARTITION BY date_key ORDER BY discount DESC) AS rank_in_day
             FROM fact_product
-            GROUP BY date_key
-            ON DUPLICATE KEY UPDATE
-                total_laptops = VALUES(total_laptops),
-                avg_price_original = VALUES(avg_price_original),
-                avg_price_sale = VALUES(avg_price_sale),
-                avg_discount = VALUES(avg_discount)
+        ) ranked
+        JOIN product_dim p ON ranked.product_key = p.product_key
+        JOIN date_dim d ON ranked.date_key = d.date_key
+        WHERE ranked.rank_in_day <= 10
+        
         """;
 
-        try (Statement st = connDM.createStatement()) {
-            st.execute(insertAgg);
+        try (Statement stDW = connDW.createStatement();
+             ResultSet rs = stDW.executeQuery(sql);
+             PreparedStatement psDM = connDM.prepareStatement(
+                     "REPLACE INTO top_discount_daily (full_date, product_key, product_name, price_sale, discount, rank_in_day) VALUES (?, ?, ?, ?, ?, ?)"
+             )) {
+            while (rs.next()) {
+                psDM.setDate(1, rs.getDate("full_date"));
+                psDM.setLong(2, rs.getLong("product_key"));
+                psDM.setString(3, rs.getString("product_name"));
+                psDM.setBigDecimal(4, rs.getBigDecimal("price_sale"));
+                psDM.setBigDecimal(5, rs.getBigDecimal("discount"));
+                psDM.setInt(6, rs.getInt("rank_in_day"));
+                psDM.addBatch();
+            }
+            psDM.executeBatch();
         }
-
-        System.out.println("✔ Cập nhật price_daily");
+        System.out.println("✔ top_discount_daily updated");
     }
 
-    // ==============================
-    // Top Discount Daily
-    // ==============================
-    private static void loadTopDiscountDaily(Connection connDM) throws SQLException {
-        String deleteOld = """
-            DELETE FROM top_discount_daily
-            WHERE date_key IN (SELECT DISTINCT date_key FROM fact_product)
-        """;
-
-        String insertTop = """
-            INSERT INTO top_discount_daily (date_key, product_key, price_sale, discount, rank_in_day)
-            SELECT date_key, product_key, price_sale, discount, rank_in_day
+    // ===============================================
+    // 3. Top 5 Highest Price
+    // ===============================================
+    private static void loadTop5HighestPrice(Connection connDW, Connection connDM) throws SQLException {
+        String sql = """
+            SELECT
+                d.full_date,
+                fp.product_key,
+                p.product_name,
+                p.category,
+                fp.price_sale,
+                ranked.rank_order
             FROM (
-                SELECT 
-                    date_key, product_key, price_sale, discount,
-                    ROW_NUMBER() OVER (PARTITION BY date_key ORDER BY discount DESC) AS rank_in_day
+                SELECT date_key, product_key, price_sale,
+                       ROW_NUMBER() OVER (PARTITION BY date_key ORDER BY price_sale DESC) AS rank_order
                 FROM fact_product
-            ) AS ranked
-            WHERE rank_in_day <= 10
+            ) ranked
+            JOIN product_dim p ON ranked.product_key = p.product_key
+            JOIN date_dim d ON ranked.date_key = d.date_key
+            JOIN fact_product fp ON fp.product_key = p.product_key AND fp.date_key = d.date_key
+            WHERE ranked.rank_order <= 5
         """;
 
-        try (Statement st = connDM.createStatement()) {
-            st.execute(deleteOld);
-            st.execute(insertTop);
+        try (Statement stDW = connDW.createStatement();
+             ResultSet rs = stDW.executeQuery(sql);
+             PreparedStatement psDM = connDM.prepareStatement(
+                     "INSERT INTO top5_highest_price (full_date, product_key, product_name, category, price_sale, rank_order) " +
+                             "VALUES (?, ?, ?, ?, ?, ?) " +
+                             "ON DUPLICATE KEY UPDATE price_sale=VALUES(price_sale), rank_order=VALUES(rank_order)"
+             )) {
+            while (rs.next()) {
+                psDM.setDate(1, rs.getDate("full_date"));
+                psDM.setLong(2, rs.getLong("product_key"));
+                psDM.setString(3, rs.getString("product_name"));
+                psDM.setString(4, rs.getString("category"));
+                psDM.setBigDecimal(5, rs.getBigDecimal("price_sale"));
+                psDM.setInt(6, rs.getInt("rank_order"));
+                psDM.addBatch();
+            }
+            psDM.executeBatch();
         }
-
-        System.out.println("✔ Cập nhật top_discount_daily");
+        System.out.println("✔ top5_highest_price updated");
     }
 
-    // ==============================
-    // Config ID
-    // ==============================
+    // ===============================================
+    // 4. Top 5 Lowest Price
+    // ===============================================
+    private static void loadTop5LowestPrice(Connection connDW, Connection connDM) throws SQLException {
+        String sql = """
+            SELECT
+                d.full_date,
+                fp.product_key,
+                p.product_name,
+                p.category,
+                fp.price_sale,
+                ranked.rank_order
+            FROM (
+                SELECT date_key, product_key, price_sale,
+                       ROW_NUMBER() OVER (PARTITION BY date_key ORDER BY price_sale ASC) AS rank_order
+                FROM fact_product
+            ) ranked
+            JOIN product_dim p ON ranked.product_key = p.product_key
+            JOIN date_dim d ON ranked.date_key = d.date_key
+            JOIN fact_product fp ON fp.product_key = p.product_key AND fp.date_key = d.date_key
+            WHERE ranked.rank_order <= 5
+        """;
+
+        try (Statement stDW = connDW.createStatement();
+             ResultSet rs = stDW.executeQuery(sql);
+             PreparedStatement psDM = connDM.prepareStatement(
+                     "INSERT INTO top5_lowest_price (full_date, product_key, product_name, category, price_sale, rank_order) " +
+                             "VALUES (?, ?, ?, ?, ?, ?) " +
+                             "ON DUPLICATE KEY UPDATE price_sale=VALUES(price_sale), rank_order=VALUES(rank_order)"
+             )) {
+            while (rs.next()) {
+                psDM.setDate(1, rs.getDate("full_date"));
+                psDM.setLong(2, rs.getLong("product_key"));
+                psDM.setString(3, rs.getString("product_name"));
+                psDM.setString(4, rs.getString("category"));
+                psDM.setBigDecimal(5, rs.getBigDecimal("price_sale"));
+                psDM.setInt(6, rs.getInt("rank_order"));
+                psDM.addBatch();
+            }
+            psDM.executeBatch();
+        }
+        System.out.println("✔ top5_lowest_price updated");
+    }
+
+    // ===============================================
+    // Control table
+    // ===============================================
     private static int getConfigId(Connection conn, String name) throws SQLException {
         String sql = "SELECT id FROM config WHERE name = ?";
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setString(1, name);
-            try (ResultSet rs = ps.executeQuery()) {
-                if (rs.next()) return rs.getInt("id");
-            }
+            ResultSet rs = ps.executeQuery();
+            if (rs.next()) return rs.getInt("id");
         }
         return -1;
     }
 
-    // ==============================
-    // Write Log
-    // ==============================
     private static void writeLog(Connection conn, int configId, boolean success) throws SQLException {
         String sql = "INSERT INTO log (id_config, date_run, status) VALUES (?, NOW(), ?)";
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
