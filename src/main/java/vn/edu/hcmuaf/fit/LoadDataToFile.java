@@ -21,9 +21,9 @@ public class LoadDataToFile {
     private static final String DB_PASS = "123456";
 
     public static void main(String[] args) {
-        //Kết nối DB Control
+        // 1 . Kết nối DB Control
         try (Connection conn = DriverManager.getConnection(DB_URL, DB_USER, DB_PASS)) {
-            //Lấy danh sách Config (fetchConfigs)
+//            2. Lấy danh sách Config có url chứa 'http%' (fetchConfigs)
             List<Map<String, Object>> configs = fetchConfigs(conn);
 
             for (Map<String, Object> config : configs) {
@@ -36,7 +36,7 @@ public class LoadDataToFile {
 
     // Hàm xử lý từng config
     private static void processConfig(Connection conn, Map<String, Object> config) {
-        //Lấy thông tin (URL, Tên...)
+        //3. Lấy thông tin (URL, Tên...)
         int configId = (int) config.get("id");
         String name = (String) config.get("name");
         String url = (String) config.get("url");
@@ -46,9 +46,9 @@ public class LoadDataToFile {
         boolean success;
 
         try {
-//            Crawl dữ liệu từ url (crawlProducts)
+//            4. Crawl dữ liệu theo url (crawlProducts)
             List<Map<String, String>> products = crawlProducts(url);
-//            Lưu file CSV vào folder(saveProductsToCSV)
+//            5. Lưu file CSV vào folder theo config(saveProductsToCSV)
             String filePath = saveProductsToCSV(location, name, products);
             System.out.println("Đã lưu file: " + filePath);
             success = true;
@@ -65,7 +65,7 @@ public class LoadDataToFile {
         }
     }
 
-    //Lấy danh sách config từ DB
+    //2. 2. Lấy danh sách Config có url chứa 'http%' (fetchConfigs)
     private static List<Map<String, Object>> fetchConfigs(Connection conn) throws SQLException {
         List<Map<String, Object>> configs = new ArrayList<>();
 
@@ -85,7 +85,7 @@ public class LoadDataToFile {
         return configs;
     }
 
-//  Crawl dữ liệu từ url (crawlProducts)
+    //            4. Crawl dữ liệu theo url (crawlProducts)
 private static List<Map<String, String>> crawlProducts(String url) throws IOException {
     List<Map<String, String>> products = new ArrayList<>();
     Document doc = Jsoup.connect(url)
@@ -122,7 +122,7 @@ private static List<Map<String, String>> crawlProducts(String url) throws IOExce
 }
 
 
-    //    Lưu file CSV vào folder(saveProductsToCSV)
+    //    5. Lưu file CSV vào folder theo config(saveProductsToCSV)
     private static String saveProductsToCSV(String location, String name, List<Map<String, String>> products) throws IOException {
         Files.createDirectories(Paths.get(location));
         String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
@@ -153,8 +153,9 @@ private static List<Map<String, String>> crawlProducts(String url) throws IOExce
         if (value == null) return "";
         return "\"" + value.replace("\"", "\"\"") + "\"";
     }
-
-//    Ghi LOG vào DB (SUCCESS/FAILED)
+//    4.2 Ghi log lỗi
+//    5.2 Ghi log lỗi
+//    6. Ghi log thành công
     private static void writeLog(Connection conn, int configId, boolean success) throws SQLException {
         String sql = "INSERT INTO log (id_config, date_run, status) VALUES (?, NOW(), ?)";
         try (PreparedStatement ps = conn.prepareStatement(sql)) {

@@ -19,44 +19,47 @@ public class LoadRawData {
         boolean success = false;
         int configId = -1;
 
-        // Không có file CSV → lỗi
+//        1.Có tham số
+//        File CSV không?
         if (args.length == 0) {
+//            1.1 In lỗi: Thiếu tên file
             System.err.println("Thiếu tên file CSV. Vui lòng truyền tham số.");
             return;
         }
 
         String csvFile = args[0];
         String tableName = "raw_data";
-
+//        2. Kết nối Database Staging (mysql://localhost:3307/staging), control(mysql://localhost:3307/control)
         try (
                 Connection connStaging = DriverManager.getConnection(DB_URL, DB_USER, DB_PASS);
                 Connection connControl = DriverManager.getConnection(DB_URL_CONTROL, DB_USER, DB_PASS)
         ) {
-            // 1. Lấy configId từ control.config
+            // 3. Lấy configId từ control.config có nảm = Load Raw Data
             configId = getConfigId(connControl, "Load Raw Data");
             if (configId == -1) {
                 System.err.println("Không tìm thấy config name = 'Load Raw Data'. Kiểm tra control.config");
                 return;
             }
 
-            // 2. Truncate raw_data
+            // 4. Xóa data cũ của bảng staging.raw_data
             try (Statement st = connStaging.createStatement()) {
                 st.execute("TRUNCATE TABLE raw_data");
                 System.out.println("Đã xóa dữ liệu cũ trong raw_data.");
             }
 
-            // 3. Đọc CSV
+            // 5. Đọc CSV
             List<String[]> data = readCSV(csvFile);
-
+            // 6.kiểm tra có dữ liệu
             if (data.isEmpty()) {
+//                6.1 in lỗi: file csv trống
                 System.err.println("File CSV trống.");
                 return;
             }
 
-            // 4. Lấy header và bỏ dòng đầu
+            // 6. Lấy header và bỏ dòng đầu
             String[] columns = data.remove(0);
 
-            // 5. Insert batch
+            // 7. Thực hiện insert dữ liệu vào bảng staging.raw_data
             insertBatch(connStaging, tableName, columns, data);
 
             success = true;
@@ -64,8 +67,10 @@ public class LoadRawData {
         } catch (Exception e) {
             e.printStackTrace();
         } finally {
-
-            // 6. Ghi log
+//            4.1 ghi log lỗi
+//            5.1 ghi log lỗi
+//            7.1 ghi log lỗi
+            // 8. Ghi log
             if (configId != -1) {
                 try (Connection connControl = DriverManager.getConnection(DB_URL_CONTROL, DB_USER, DB_PASS)) {
                     writeLog(connControl, configId, success);
@@ -75,10 +80,6 @@ public class LoadRawData {
             }
         }
     }
-
-    // ============================
-    // GET CONFIG ID
-    // ============================
     private static int getConfigId(Connection conn, String name) throws SQLException {
         String sql = "SELECT id FROM config WHERE name = ?";
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
@@ -89,10 +90,6 @@ public class LoadRawData {
         }
         return -1;
     }
-
-    // ============================
-    // READ CSV
-    // ============================
     private static List<String[]> readCSV(String csvFile) {
         List<String[]> rows = new ArrayList<>();
         try (BufferedReader br = new BufferedReader(new FileReader(csvFile))) {
@@ -116,10 +113,6 @@ public class LoadRawData {
 
         return rows;
     }
-
-    // ============================
-    // INSERT BATCH
-    // ============================
     private static void insertBatch(Connection conn, String tableName, String[] columns, List<String[]> data) {
 
         String placeholders = String.join(",", Arrays.stream(columns).map(c -> "?").toArray(String[]::new));
@@ -150,10 +143,6 @@ public class LoadRawData {
             System.err.println("Lỗi SQL: " + e.getMessage());
         }
     }
-
-    // ============================
-    // WRITE LOG
-    // ============================
     private static void writeLog(Connection conn, int configId, boolean success) throws SQLException {
         String sql = "INSERT INTO log (id_config, date_run, status) VALUES (?, NOW(), ?)";
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
