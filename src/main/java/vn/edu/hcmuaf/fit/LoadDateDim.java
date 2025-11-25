@@ -12,7 +12,6 @@ import java.util.Locale;
 public class LoadDateDim {
 
     private static final String DB_URL_DW = "jdbc:mysql://localhost:3307/dw?serverTimezone=UTC";
-    private static final String DB_URL_DM = "jdbc:mysql://localhost:3307/datamart?serverTimezone=UTC";
     private static final String DB_USER = "root";
     private static final String DB_PASS = "123456";
 
@@ -27,12 +26,9 @@ public class LoadDateDim {
 
         try (
                 Connection connDW = DriverManager.getConnection(DB_URL_DW, DB_USER, DB_PASS);
-                Connection connDM = DriverManager.getConnection(DB_URL_DM, DB_USER, DB_PASS);
-                PreparedStatement psDW = connDW.prepareStatement(insertSQL);
-                PreparedStatement psDM = connDM.prepareStatement(insertSQL)
+                PreparedStatement psDW = connDW.prepareStatement(insertSQL)
         ) {
             connDW.setAutoCommit(false);
-            connDM.setAutoCommit(false);
 
             WeekFields weekFields = WeekFields.of(Locale.getDefault());
             int batchSize = 0;
@@ -43,42 +39,30 @@ public class LoadDateDim {
                 int weekOfMonth = (date.getDayOfMonth() - 1) / 7 + 1;
                 int weekOfYear = date.get(weekFields.weekOfYear());
 
-                Object[] values = new Object[]{
-                        dateKey,
-                        Date.valueOf(date),
-                        date.getDayOfMonth(),
-                        date.getMonthValue(),
-                        (date.getMonthValue() - 1) / 3 + 1, // quarter
-                        date.getYear(),
-                        date.getDayOfWeek().name(),
-                        date.getMonth().name(),
-                        date.getDayOfWeek() == DayOfWeek.SATURDAY || date.getDayOfWeek() == DayOfWeek.SUNDAY,
-                        weekOfMonth,
-                        weekOfYear
-                };
-
-                for (int i = 0; i < values.length; i++) {
-                    psDW.setObject(i + 1, values[i]);
-                    psDM.setObject(i + 1, values[i]);
-                }
+                psDW.setInt(1, dateKey);
+                psDW.setDate(2, Date.valueOf(date));
+                psDW.setInt(3, date.getDayOfMonth());
+                psDW.setInt(4, date.getMonthValue());
+                psDW.setInt(5, (date.getMonthValue() - 1) / 3 + 1); // quarter
+                psDW.setInt(6, date.getYear());
+                psDW.setString(7, date.getDayOfWeek().name());
+                psDW.setString(8, date.getMonth().name());
+                psDW.setBoolean(9, date.getDayOfWeek() == DayOfWeek.SATURDAY || date.getDayOfWeek() == DayOfWeek.SUNDAY);
+                psDW.setInt(10, weekOfMonth);
+                psDW.setInt(11, weekOfYear);
 
                 psDW.addBatch();
-                psDM.addBatch();
                 batchSize++;
 
                 if (batchSize % 1000 == 0) {
                     psDW.executeBatch();
-                    psDM.executeBatch();
                 }
             }
 
             psDW.executeBatch();
-            psDM.executeBatch();
-
             connDW.commit();
-            connDM.commit();
 
-            System.out.println("Date dimension loaded successfully into DW and DM from 2020 to 2030!");
+            System.out.println("Date dimension loaded successfully into DW from 2020 to 2030!");
 
         } catch (Exception e) {
             e.printStackTrace();
