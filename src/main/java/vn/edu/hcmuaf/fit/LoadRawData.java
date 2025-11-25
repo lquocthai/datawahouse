@@ -10,99 +10,156 @@ import java.util.List;
 
 public class LoadRawData {
     private static final String DB_URL = "jdbc:mysql://localhost:3307/staging";
-    private static final String DB_USER = "user_staging";
+    private static final String DB_URL_CONTROL = "jdbc:mysql://localhost:3307/control";
+    private static final String DB_USER = "root";
     private static final String DB_PASS = "123456";
 
     public static void main(String[] args) {
-        // check có tham số hay không
+
+        boolean success = false;
+        int configId = -1;
+
+        // Không có file CSV → lỗi
         if (args.length == 0) {
-            // In lỗi: Thiếu tên file
-            System.err.println("Thiếu tên file CSV. Vui lòng truyền vào tham số dòng lệnh.");
+            System.err.println("Thiếu tên file CSV. Vui lòng truyền tham số.");
             return;
         }
 
         String csvFile = args[0];
         String tableName = "raw_data";
 
-        // Kết nối Database Staging
-        try (Connection conn = DriverManager.getConnection(DB_URL, DB_USER, DB_PASS)) {
-
-            // ================================
-            try (Statement st = conn.createStatement()) {
-                st.execute("TRUNCATE TABLE raw_data");
-                System.out.println("Đã xóa dữ liệu cũ trong bảng raw_data.");
-            }
-            // Đọc file CSV vào List
-            List<String[]> data = readCSV(csvFile);
-
-            // Kiểm tra dữ liệu rỗng?
-            if (data.isEmpty()) {
-                // [FLOW: ErrorEmpty] - In lỗi: File trống
-                System.err.println("File CSV trống hoặc không có dữ liệu.");
+        try (
+                Connection connStaging = DriverManager.getConnection(DB_URL, DB_USER, DB_PASS);
+                Connection connControl = DriverManager.getConnection(DB_URL_CONTROL, DB_USER, DB_PASS)
+        ) {
+            // 1. Lấy configId từ control.config
+            configId = getConfigId(connControl, "Load Raw Data");
+            if (configId == -1) {
+                System.err.println("Không tìm thấy config name = 'Load Raw Data'. Kiểm tra control.config");
                 return;
             }
-            // Lấy dòng đầu làm Header (Columns)
-            // lấy ra product_name,price,.... vaf xóa nó ra khỏi data luôn
+
+            // 2. Truncate raw_data
+            try (Statement st = connStaging.createStatement()) {
+                st.execute("TRUNCATE TABLE raw_data");
+                System.out.println("Đã xóa dữ liệu cũ trong raw_data.");
+            }
+
+            // 3. Đọc CSV
+            List<String[]> data = readCSV(csvFile);
+
+            if (data.isEmpty()) {
+                System.err.println("File CSV trống.");
+                return;
+            }
+
+            // 4. Lấy header và bỏ dòng đầu
             String[] columns = data.remove(0);
-            insertBatch(conn, tableName, columns, data);
-        } catch (SQLException e) {
-            System.err.println("Lỗi kết nối DB: " + e.getMessage());
+
+            // 5. Insert batch
+            insertBatch(connStaging, tableName, columns, data);
+
+            success = true;
+
+        } catch (Exception e) {
+            e.printStackTrace();
+        } finally {
+
+            // 6. Ghi log
+            if (configId != -1) {
+                try (Connection connControl = DriverManager.getConnection(DB_URL_CONTROL, DB_USER, DB_PASS)) {
+                    writeLog(connControl, configId, success);
+                } catch (SQLException e) {
+                    e.printStackTrace();
+                }
+            }
         }
     }
 
-    // Hàm đọc CSV
+    // ============================
+    // GET CONFIG ID
+    // ============================
+    private static int getConfigId(Connection conn, String name) throws SQLException {
+        String sql = "SELECT id FROM config WHERE name = ?";
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, name);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) return rs.getInt("id");
+            }
+        }
+        return -1;
+    }
+
+    // ============================
+    // READ CSV
+    // ============================
     private static List<String[]> readCSV(String csvFile) {
         List<String[]> rows = new ArrayList<>();
         try (BufferedReader br = new BufferedReader(new FileReader(csvFile))) {
+
             String line;
             while ((line = br.readLine()) != null) {
                 if (!line.trim().isEmpty()) {
                     String[] values = line.split(",", -1);
+
                     for (int i = 0; i < values.length; i++) {
                         values[i] = values[i].trim();
                     }
+
                     rows.add(values);
                 }
             }
+
         } catch (IOException e) {
             System.err.println("Lỗi đọc file CSV: " + e.getMessage());
         }
+
         return rows;
     }
+
+    // ============================
+    // INSERT BATCH
+    // ============================
     private static void insertBatch(Connection conn, String tableName, String[] columns, List<String[]> data) {
-        // Tạo câu lệnh INSERT SQL
+
         String placeholders = String.join(",", Arrays.stream(columns).map(c -> "?").toArray(String[]::new));
         String sql = "INSERT INTO " + tableName + " (" + String.join(",", columns) + ") VALUES (" + placeholders + ")";
 
         try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
+
             int count = 0;
 
-            // Bắt đầu vòng lặp từng dòng dữ liệu
             for (String[] row : data) {
-                // Gán giá trị vào PreparedStatement
                 for (int i = 0; i < columns.length; i++) {
                     String value = (row.length > i) ? row[i] : null;
                     pstmt.setString(i + 1, value);
                 }
 
-                //pstmt.addBatch
                 pstmt.addBatch();
 
-                // kiểm tra Đủ 1000 dòng?
                 if (++count % 1000 == 0) {
-                    // Execute Batch và in log(Đúng)
                     pstmt.executeBatch();
-                    System.out.println(" Đã insert " + count + " dòng...");
+                    System.out.println("Đã insert " + count + " dòng...");
                 }
-                // Quay lại LoopStart nếu còn, xuống dưới nếu hết
             }
-            //  Execute Batch phần còn lại (khi hết vòng lặp)
+
             pstmt.executeBatch();
-            // In thông báo hoàn tất
-            System.out.println("Hoàn tất insert " + count + " dòng vào bảng " + tableName);
+            System.out.println("Hoàn tất insert " + count + " dòng vào " + tableName);
 
         } catch (SQLException e) {
             System.err.println("Lỗi SQL: " + e.getMessage());
+        }
+    }
+
+    // ============================
+    // WRITE LOG
+    // ============================
+    private static void writeLog(Connection conn, int configId, boolean success) throws SQLException {
+        String sql = "INSERT INTO log (id_config, date_run, status) VALUES (?, NOW(), ?)";
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setInt(1, configId);
+            ps.setString(2, success ? "SUCCESS" : "FAILED");
+            ps.executeUpdate();
         }
     }
 }
